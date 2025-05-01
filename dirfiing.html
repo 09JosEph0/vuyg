@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>3D Driving and Drifting Game</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/examples/js/controls/OrbitControls.js"></script>
+  <style>
+    body, html {
+      margin: 0; padding: 0; height: 100%; font-family: 'Roboto', sans-serif;
+      background: #1a202c;
+      overflow: hidden;
+    }
+    #gameCanvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+    .ui-panel {
+      position: absolute;
+      top: 1rem;
+      left: 1rem;
+      background: rgba(0,0,0,0.6);
+      padding: 1rem 1.5rem;
+      border-radius: 0.5rem;
+      color: white;
+      user-select: none;
+      max-width: 300px;
+    }
+    .ui-panel select {
+      background: #2d3748;
+      color: white;
+      border: none;
+      padding: 0.25rem 0.5rem;
+      border-radius: 0.25rem;
+      margin-left: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <div class="ui-panel">
+    <div class="mb-2">
+      <span class="fas fa-tachometer-alt"></span> Speed: <span id="speed">0</span> km/h
+    </div>
+    <div>
+      <label for="mapSelect" class="mr-2">Select Map:</label>
+      <select id="mapSelect">
+        <option value="map1">Map 1 - Flat Track</option>
+        <option value="map2">Map 2 - Curved Track</option>
+      </select>
+    </div>
+  </div>
+
+  <script>
+    // Basic Three.js setup
+    const canvas = document.getElementById('gameCanvas');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setClearColor(0x20232a);
+
+    const scene = new THREE.Scene();
+
+    // Camera setup
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 5, 10);
+
+    // Controls (for debugging, disabled in gameplay)
+    // const controls = new THREE.OrbitControls(camera, renderer.domElement);
+
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(5, 10, 7);
+    scene.add(directionalLight);
+
+    // Ground materials
+    const groundMaterial1 = new THREE.MeshStandardMaterial({ color: 0x2d6a4f });
+    const groundMaterial2 = new THREE.MeshStandardMaterial({ color: 0x4a90e2 });
+
+    // Maps
+    const maps = {
+      map1: createFlatTrack(),
+      map2: createCurvedTrack()
+    };
+
+    let currentMap = null;
+
+    function createFlatTrack() {
+      const group = new THREE.Group();
+      const ground = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), groundMaterial1);
+      ground.rotation.x = -Math.PI / 2;
+      ground.receiveShadow = true;
+      group.add(ground);
+      return group;
+    }
+
+    function createCurvedTrack() {
+      const group = new THREE.Group();
+      const ground = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), groundMaterial2);
+      ground.rotation.x = -Math.PI / 2;
+      ground.receiveShadow = true;
+      group.add(ground);
+
+      // Add some curved track lines (simple visual)
+      const curveMaterial = new THREE.LineBasicMaterial({ color: 0xffffff });
+      const curvePoints = [];
+      for(let i=0; i<=50; i++) {
+        const angle = i * 0.1;
+        curvePoints.push(new THREE.Vector3(Math.sin(angle)*20, 0.01, i*2));
+      }
+      const curveGeometry = new THREE.BufferGeometry().setFromPoints(curvePoints);
+      const curveLine = new THREE.Line(curveGeometry, curveMaterial);
+      group.add(curveLine);
+
+      return group;
+    }
+
+    // Car
+    const car = new THREE.Group();
+
+    // Car body
+    const bodyGeometry = new THREE.BoxGeometry(1.5, 0.5, 3);
+    const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+    const bodyMesh = new THREE.Mesh(bodyGeometry, bodyMaterial);
+    bodyMesh.castShadow = true;
+    car.add(bodyMesh);
+
+    // Wheels
+    const wheelGeometry = new THREE.CylinderGeometry(0.3, 0.3, 0.2, 16);
+    const wheelMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
+    const wheelPositions = [
+      [-0.7, -0.25, 1.1],
+      [0.7, -0.25, 1.1],
+      [-0.7, -0.25, -1.1],
+      [0.7, -0.25, -1.1]
+    ];
+    const wheels = [];
+    wheelPositions.forEach(pos => {
+      const wheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
+      wheel.rotation.z = Math.PI / 2;
+      wheel.position.set(...pos);
+      wheel.castShadow = true;
+      car.add(wheel);
+      wheels.push(wheel);
+    });
+
+    car.position.set(0, 0.3, 0);
+    scene.add(car);
+
+    // Physics and controls variables
+    let velocity = 0;
+    let maxSpeed = 120; // km/h
+    let acceleration = 0.5;
+    let deceleration = 0.3;
+    let driftFactor = 0.95;
+    let steeringAngle = 0;
+    let maxSteeringAngle = 0.04;
+    let driftSteeringMultiplier = 2.5;
+    let isDrifting = false;
+
+    // Keyboard input
+    const keys = { w: false, a: false, s: false, d: false };
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key.toLowerCase() in keys) keys[e.key.toLowerCase()] = true;
+    });
+    window.addEventListener('keyup', (e) => {
+      if (e.key.toLowerCase() in keys) keys[e.key.toLowerCase()] = false;
+    });
+
+    // Speed display
+    const speedDisplay = document.getElementById('speed');
+
+    // Map selection
+    const mapSelect = document.getElementById('mapSelect');
+    mapSelect.addEventListener('change', () => {
+      switchMap(mapSelect.value);
+    });
+
+    function switchMap(mapName) {
+      if (currentMap) {
+        scene.remove(currentMap);
+      }
+      currentMap = maps[mapName];
+      scene.add(currentMap);
+      resetCar();
+    }
+
+    function resetCar() {
+      car.position.set(0, 0.3, 0);
+      car.rotation.set(0, 0, 0);
+      velocity = 0;
+      steeringAngle = 0;
+      isDrifting = false;
+    }
+
+    // Initial map
+    switchMap('map1');
+
+    // Game loop
+    function animate() {
+      requestAnimationFrame(animate);
+
+      // Acceleration and braking
+      if (keys.w) {
+        velocity += acceleration;
+        if (velocity > maxSpeed) velocity = maxSpeed;
+      } else if (keys.s) {
+        velocity -= deceleration * 2;
+        if (velocity < -maxSpeed / 2) velocity = -maxSpeed / 2;
+      } else {
+        // Natural deceleration
+        velocity *= 0.98;
+        if (Math.abs(velocity) < 0.1) velocity = 0;
+      }
+
+      // Steering
+      if (keys.a) {
+        steeringAngle += maxSteeringAngle;
+      } else if (keys.d) {
+        steeringAngle -= maxSteeringAngle;
+      } else {
+        // Return steering angle to zero gradually
+        steeringAngle *= 0.7;
+      }
+
+      // Drifting detection (if steering while moving fast)
+      isDrifting = Math.abs(steeringAngle) > 0.02 && Math.abs(velocity) > maxSpeed * 0.3;
+
+      // Adjust steering angle if drifting
+      let effectiveSteering = steeringAngle;
+      if (isDrifting) {
+        effectiveSteering *= driftSteeringMultiplier;
+        velocity *= driftFactor;
+      }
+
+      // Update car rotation and position
+      car.rotation.y += effectiveSteering * velocity * 0.001;
+
+      // Move car forward
+      const forwardVector = new THREE.Vector3(0, 0, -1);
+      forwardVector.applyAxisAngle(new THREE.Vector3(0, 1, 0), car.rotation.y);
+      car.position.add(forwardVector.multiplyScalar(velocity * 0.02));
+
+      // Update camera to follow car
+      const cameraOffset = new THREE.Vector3(0, 5, 10);
+      cameraOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), car.rotation.y);
+      camera.position.copy(car.position).add(cameraOffset);
+      camera.lookAt(car.position);
+
+      // Update speed display
+      speedDisplay.textContent = Math.abs(Math.round(velocity));
+
+      renderer.render(scene, camera);
+    }
+
+    animate();
+
+    // Handle window resize
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth/window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
