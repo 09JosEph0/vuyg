@@ -100,6 +100,12 @@
 
     const scene = new THREE.Scene();
 
+    // Add helpers for debugging
+    const gridHelper = new THREE.GridHelper(100, 20, 0x888888, 0x444444);
+    scene.add(gridHelper);
+    const axesHelper = new THREE.AxesHelper(5);
+    scene.add(axesHelper);
+
     // Camera setup
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
     camera.position.set(0, 7, 15);
@@ -120,6 +126,10 @@
     directionalLight.shadow.camera.top = 20;
     directionalLight.shadow.camera.bottom = -20;
     scene.add(directionalLight);
+
+    // Add directional light helper
+    const dirLightHelper = new THREE.DirectionalLightHelper(directionalLight, 5, 0xff0000);
+    scene.add(dirLightHelper);
 
     // Utility functions
     function clamp(value, min, max) {
@@ -609,3 +619,4 @@
   </script>
 </body>
 </html>
+
